@@ -9,6 +9,13 @@
 ## Why it exists
 I run two AI assistants. **Grok Bot** is a cloud assistant with its own computer, routines and connectors. **Hermes** is a self-hosted agent on my own Linux server, connected to my long-term wiki. Each is good at different things, and I wanted them to pass work and information to each other without me copying and pasting between chats.
 
+### Direct Codex connection candidate
+
+[DIRECT-CODEX.md](DIRECT-CODEX.md) describes a separate, standard-library-only
+sender and exact-ID reply reader. It uses no Neo/Bob agent relay. It is a local
+candidate, not a working Grok integration: direct credentials and a Grok-side
+reply endpoint are still required. It does not change this Hermes bridge.
+
 > **Want Grok Bot to build this for you?** Paste [SETUP-PROMPT.md](SETUP-PROMPT.md) into a Grok Bot chat.
 
 ## Prerequisites
