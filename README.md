@@ -42,7 +42,7 @@ flowchart LR
 - **SSH is powerful.** Grok Bot's key can run any command as that user on the Hermes machine. A tighter setup would restrict the key with `command=` in `authorized_keys`, or use a dedicated low-privilege user.
 - **One agent can be steered by another.** A compromised or confused Hermes could send misleading messages. The data-not-instructions rule reduces this risk but doesn't remove it.
 - **The webhook key is a bearer credential.** Anyone with the URL and key can trigger Grok Bot. Store them only in secret stores or a mode-600 file, and rotate by recreating the routine if they leak.
-- **App bug during setup:** the app's desktop UI currently hides the webhook URL, so getting the URL and key needed a workaround (in-app deep links). Recreating the routine means repeating that.
+- **App bug during setup (fixed in Grok Bot 0.75.2):** older desktop versions hid the webhook URL, so getting the URL and key needed a workaround (in-app deep links). From 0.75.2, the routine's menu shows the URL and key directly, with the key hidden until you reveal it.
 - **Human-in-the-loop prompts:** some actions trigger approval cards, which is safer but slower.
 - **Keep secrets out of shared docs.** Use placeholders like `<HERMES_HOST>`, `<TAILNET>` and `<SSH_USER>`, and never share private keys or OAuth secrets.
 
