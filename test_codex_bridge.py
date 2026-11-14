@@ -197,7 +197,7 @@ class BridgeTests(unittest.TestCase):
         changes = (
             {"in_reply_to": "f" * 32}, {"context": "another-chat"},
             {"from": "bob"}, {"to": "someone-else"}, {"kind": "request"},
-            {"v": 2}, {"text": " "}, {"text": "x" * 2000},
+            {"v": 2}, {"text": " "}, {"text": "x" * 2000}, {"extra": "unexpected"},
         )
         for change in changes:
             with self.subTest(change=next(iter(change))):
@@ -210,6 +210,19 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(self.record(sent["id"])["status"], "awaiting_reply")
                 self.assertNotIn("reply", self.record(sent["id"]))
                 self.assertEqual([c[0] for c in transport.calls], ["POST", "GET"])
+
+    def test_compact_reply_under_2000_chars_is_accepted_even_if_spaced_json_exceeds_2000(self):
+        transport = ScriptedTransport((200, None))
+        bridge = self.bridge(transport)
+        sent = bridge.send("Ping", "chat-42")
+        base_len = len(json.dumps(reply_for(sent, text=""), ensure_ascii=False, separators=(",", ":")))
+        reply = reply_for(sent, text="x" * (1999 - base_len))
+        self.assertEqual(len(json.dumps(reply, ensure_ascii=False, separators=(",", ":"))), 1999)
+        self.assertGreaterEqual(len(json.dumps(reply, ensure_ascii=False)), 2000)
+        transport.outcomes.append((200, reply))
+        result = bridge.read(sent["id"])
+        self.assertTrue(result["round_trip_verified"])
+        self.assertEqual(result["reply"], reply)
 
     def test_uncertain_send_retains_id_and_can_read_without_resending(self):
         transport = ScriptedTransport(BridgeError("Transport outcome uncertain"))
@@ -338,6 +351,21 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(BridgeError, "State directory must be private"):
             Bridge(CONFIG, state)
 
+    def test_symlink_state_directory_is_rejected_before_mkdir(self):
+        dangling_target = Path(self.tmp.name) / "missing-target"
+        dangling_link = Path(self.tmp.name) / "dangling-state"
+        dangling_link.symlink_to(dangling_target)
+        with self.assertRaisesRegex(BridgeError, "State directory must be private"):
+            Bridge(CONFIG, dangling_link)
+        self.assertFalse(dangling_target.exists())
+
+        real_target = Path(self.tmp.name) / "real-target"
+        real_target.mkdir(mode=0o700)
+        real_link = Path(self.tmp.name) / "real-state"
+        real_link.symlink_to(real_target)
+        with self.assertRaisesRegex(BridgeError, "State directory must be private"):
+            Bridge(CONFIG, real_link)
+
 
 class LoopbackTransportTests(unittest.TestCase):
     def test_actual_exchange_sends_authorization_and_exact_body(self):
@@ -374,6 +402,25 @@ class LoopbackTransportTests(unittest.TestCase):
                     with self.assertRaisesRegex(BridgeError, expected):
                         exchange("GET", url, CONFIG["inbox_auth"])
                 self.assertEqual(len(requests), 1)
+
+    def test_actual_exchange_get_vs_post_transport_error_messages(self):
+        with patch("codex_bridge.urllib.request.build_opener") as opener:
+            opener.return_value.open.side_effect = http.client.BadStatusLine("broken")
+            with self.assertRaisesRegex(BridgeError, "inspect this request before sending again"):
+                exchange("POST", CONFIG["webhook_url"], CONFIG["webhook_auth"], {"text": "ping"})
+            with self.assertRaisesRegex(BridgeError, "retry reading this request ID"):
+                exchange("GET", CONFIG["inbox_url"] + "/" + ("a" * 32), CONFIG["inbox_auth"])
+
+    def test_actual_exchange_closes_http_error_response(self):
+        import urllib.error
+        closed = []
+        err = urllib.error.HTTPError(CONFIG["inbox_url"], 502, "Bad Gateway", {}, io.BytesIO(b"err"))
+        orig_close = err.close
+        err.close = lambda: (closed.append(True), orig_close())[1]
+        with patch("codex_bridge.urllib.request.build_opener") as opener:
+            opener.return_value.open.side_effect = err
+            self.assertEqual(exchange("GET", CONFIG["inbox_url"], CONFIG["inbox_auth"]), (502, None))
+        self.assertEqual(closed, [True])
 
 
 if __name__ == "__main__":

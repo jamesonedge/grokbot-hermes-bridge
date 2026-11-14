@@ -61,9 +61,12 @@ def exchange(method, url, auth, body=None):
             raw = response.read(16385)
     except urllib.error.HTTPError as error:
         # Do not expose error bodies/URLs, which may contain private information.
-        return error.code, None
+        with error:
+            return error.code, None
     except (OSError, ValueError, http.client.HTTPException):
-        raise BridgeError("Transport outcome uncertain; inspect this request before sending again") from None
+        if method == "POST":
+            raise BridgeError("Transport outcome uncertain; inspect this request before sending again") from None
+        raise BridgeError("Transport outcome uncertain; retry reading this request ID") from None
     if len(raw) > 16384:
         raise BridgeError("Response exceeds the bounded message size")
     if method == "POST":
@@ -77,6 +80,8 @@ def exchange(method, url, auth, body=None):
 class Bridge:
     def __init__(self, config, state, transport=exchange, clock=time.time):
         self.config, self.state, self.transport, self.clock = config, Path(state), transport, clock
+        if self.state.is_symlink():
+            raise BridgeError("State directory must be private: chmod 700")
         self.state.mkdir(parents=True, exist_ok=True, mode=0o700)
         if (self.state.is_symlink() or self.state.stat().st_uid != os.getuid() or
                 stat.S_IMODE(self.state.stat().st_mode) & 0o077):
@@ -145,9 +150,10 @@ class Bridge:
             raise BridgeError(f"Reply read failed: HTTP {status}")
         expected = {"v": 1, "in_reply_to": request_id, "context": record["context"],
                     "from": "grokbot", "to": "codex", "kind": "reply"}
-        if (not isinstance(reply, dict) or any(reply.get(k) != v for k, v in expected.items()) or
+        if (not isinstance(reply, dict) or set(reply) != set(expected) | {"text"} or
+                any(reply.get(k) != v for k, v in expected.items()) or
                 not isinstance(reply.get("text"), str) or not reply["text"].strip() or
-                len(json.dumps(reply, ensure_ascii=False)) >= 2000):
+                len(json.dumps(reply, ensure_ascii=False, separators=(",", ":"))) >= 2000):
             raise BridgeError("Reply rejected: ID, context, origin or message format does not match")
         self._save({**record, "status": "reply_received", "reply": reply})
         return {"status": "reply_received", "reply": reply,
